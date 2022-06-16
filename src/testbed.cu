@@ -2159,7 +2159,7 @@ Testbed::Testbed(ETestbedMode mode)
 	set_min_level(0.f);
 	set_max_level(1.f);
 
-	CUDA_CHECK_THROW(cudaStreamCreate(&m_inference_stream));
+	CUDA_CHECK_THROW(cudaStreamCreate(&m_inference_stream)); // Koke_Cacao: create stream to be training stream
 	m_training_stream = m_inference_stream;
 }
 
@@ -2169,7 +2169,7 @@ Testbed::~Testbed() {
 	}
 }
 
-void Testbed::train(uint32_t batch_size) {
+void Testbed::train(uint32_t batch_size) { // Koke_Cacao: main training function
 	if (!m_training_data_available) {
 		m_train = false;
 		return;
@@ -2188,14 +2188,14 @@ void Testbed::train(uint32_t batch_size) {
 		}};
 
 		switch (m_testbed_mode) {
-			case ETestbedMode::Nerf:   training_prep_nerf(batch_size, m_training_stream);  break;
+			case ETestbedMode::Nerf:   training_prep_nerf(batch_size, m_training_stream);  break; // Koke_Cacao: we prep train nerf (update_density_grid_nerf)
 			case ETestbedMode::Sdf:    training_prep_sdf(batch_size, m_training_stream);   break;
 			case ETestbedMode::Image:  training_prep_image(batch_size, m_training_stream); break;
 			case ETestbedMode::Volume: training_prep_volume(batch_size, m_training_stream); break;
 			default: throw std::runtime_error{"Invalid training mode."};
 		}
 
-		CUDA_CHECK_THROW(cudaStreamSynchronize(m_training_stream));
+		CUDA_CHECK_THROW(cudaStreamSynchronize(m_training_stream)); // Koke_Cacao: and synchronize stream
 	}
 
 	// Find leaf optimizer and update its settings
@@ -2216,7 +2216,7 @@ void Testbed::train(uint32_t batch_size) {
 		}};
 
 		switch (m_testbed_mode) {
-			case ETestbedMode::Nerf:   train_nerf(batch_size, get_loss_scalar, m_training_stream); break;
+			case ETestbedMode::Nerf:   train_nerf(batch_size, get_loss_scalar, m_training_stream); break; // Koke_Cacao: we train nerf
 			case ETestbedMode::Sdf:    train_sdf(batch_size, get_loss_scalar, m_training_stream); break;
 			case ETestbedMode::Image:  train_image(batch_size, get_loss_scalar, m_training_stream); break;
 			case ETestbedMode::Volume: train_volume(batch_size, get_loss_scalar, m_training_stream); break;

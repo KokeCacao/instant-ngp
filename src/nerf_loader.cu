@@ -193,7 +193,7 @@ NerfDataset create_empty_nerf_dataset(size_t n_images, int aabb_scale, bool is_h
 	return result;
 }
 
-NerfDataset load_nerf(const std::vector<filesystem::path>& jsonpaths, float sharpen_amount) {
+NerfDataset load_nerf(const std::vector<filesystem::path>& jsonpaths, float sharpen_amount) { // Koke_Cacao: NeRF data loader
 	if (jsonpaths.empty()) {
 		throw std::runtime_error{"Cannot load NeRF data from an empty set of paths."};
 	}
