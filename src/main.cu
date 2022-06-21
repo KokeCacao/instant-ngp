@@ -20,11 +20,42 @@
 
 #include <filesystem/path.h>
 
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/file.h>
+#include <fcntl.h>
+
 using namespace args;
 using namespace ngp;
 using namespace std;
 using namespace tcnn;
 namespace fs = ::filesystem;
+
+/*! Try to get lock. Return its file descriptor or -1 if failed.
+ *
+ *  @param lockName Name of file used as lock (i.e. '/var/lock/myLock').
+ *  @return File descriptor of lock file, or -1 if failed.
+ */
+int tryGetLock(char const *lockName) {
+    mode_t m = umask(0);
+    int fd = open(lockName, O_RDWR|O_CREAT, 0666);
+    umask(m);
+    if ( fd >= 0 && flock(fd, LOCK_EX | LOCK_NB) < 0) {
+        close(fd);
+        fd = -1;
+    }
+    return fd;
+}
+
+/*! Release the lock obtained with tryGetLock( lockName ).
+ *
+ *  @param fd File descriptor of lock returned by tryGetLock( lockName ).
+ *  @param lockName Name of file used as lock (i.e. '/var/lock/myLock').
+ */
+void releaseLock(int fd, char const *lockName) {
+    if (fd < 0) return;
+    close(fd);
+}
 
 int main(int argc, char** argv) {
 	ArgumentParser parser{
@@ -73,6 +104,13 @@ int main(int argc, char** argv) {
 		"SCENE",
 		"The scene to load. Can be NeRF dataset, a *.obj mesh for training a SDF, an image, or a *.nvdb volume.",
 		{'s', "scene"},
+	};
+
+	ValueFlag<string> lock_flag{
+		parser,
+		"LOCK",
+		"Stream lock.",
+		{"lock"},
 	};
 
 	ValueFlag<string> snapshot_flag{
@@ -230,6 +268,26 @@ int main(int argc, char** argv) {
 			if (!gui) {
 				tlog::info() << "iteration=" << testbed.m_training_step << " loss=" << testbed.m_loss_scalar.val();
 			}
+      if (lock_flag && testbed.m_loss_scalar.val() < 0.0005 && scene_flag) {
+        fs::path lock_path = get(lock_flag);
+        const std::string& str = lock_path.str();
+        const char *cstr = str.c_str();
+        int lock_fd = tryGetLock(cstr);
+        if (lock_fd > -1) {
+          tlog::info() << "Got Lock!";
+          
+          // 1. if this doesn't unlock, blender could not execute (blender can read ngp lock)
+          // 2. if I don't load training data here, ngp will wait for blender finish execute (npg can read blender's lock, npg does not access illegal stuff outside of lock)
+          // 3. if ngp got lock, and blender change file, it will break
+          fs::path scene_path = get(scene_flag);
+          testbed.load_training_data(scene_path.str());
+
+          releaseLock(lock_fd, cstr);
+          tlog::info() << "Released Lock";
+        } else {
+				  tlog::warning() << "Cannot Aquire Lock at " << lock_path.str();
+        }
+      }
 		}
 	} catch (const exception& e) {
 		tlog::error() << "Uncaught exception: " << e.what();
