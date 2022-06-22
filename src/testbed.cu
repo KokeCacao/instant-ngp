@@ -1714,11 +1714,12 @@ bool Testbed::frame() {
 
 	// Render against the trained neural network. If we're training and already close to convergence,
 	// we can skip rendering if the scene camera doesn't change
-	uint32_t n_to_skip = m_train ? tcnn::clamp(m_training_step / 16u, 15u, 255u) : 0;
-	if (m_render_skip_due_to_lack_of_camera_movement_counter > n_to_skip) {
-		m_render_skip_due_to_lack_of_camera_movement_counter = 0;
-	}
-	bool skip_rendering = m_render_skip_due_to_lack_of_camera_movement_counter++ != 0;
+	// uint32_t n_to_skip = m_train ? tcnn::clamp(m_training_step / 16u, 15u, 255u) : 0;
+	// if (m_render_skip_due_to_lack_of_camera_movement_counter > n_to_skip) {
+	// 	m_render_skip_due_to_lack_of_camera_movement_counter = 0;
+	// }
+	// bool skip_rendering = m_render_skip_due_to_lack_of_camera_movement_counter++ != 0;
+	bool skip_rendering = false;
 	if (!skip_rendering || (std::chrono::steady_clock::now() - m_last_gui_draw_time_point) > 100ms) {
 		redraw_gui_next_frame();
 	}
