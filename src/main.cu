@@ -24,6 +24,7 @@
 #include <sys/stat.h>
 #include <sys/file.h>
 #include <fcntl.h>
+#include <time.h>
 
 using namespace args;
 using namespace ngp;
@@ -55,6 +56,17 @@ int tryGetLock(char const *lockName) {
 void releaseLock(int fd, char const *lockName) {
     if (fd < 0) return;
     close(fd);
+}
+
+float standardDevation(std::vector<float> v) {
+  float sum = std::accumulate(v.begin(), v.end(), 0.0);
+  float mean = sum / v.size();
+
+  std::vector<float> diff(v.size());
+  std::transform(v.begin(), v.end(), diff.begin(),
+                std::bind2nd(std::minus<float>(), mean));
+  float sq_sum = std::inner_product(diff.begin(), diff.end(), diff.begin(), 0.0);
+  return std::sqrt(sq_sum / v.size());
 }
 
 int main(int argc, char** argv) {
@@ -111,6 +123,13 @@ int main(int argc, char** argv) {
 		"LOCK",
 		"Stream lock.",
 		{"lock"},
+	};
+
+	ValueFlag<string> change_flag{
+		parser,
+		"CHANGE",
+		"Indicate whether the dataset is changed.",
+		{"change"},
 	};
 
 	ValueFlag<string> snapshot_flag{
@@ -268,22 +287,37 @@ int main(int argc, char** argv) {
 			if (!gui) {
 				tlog::info() << "iteration=" << testbed.m_training_step << " loss=" << testbed.m_loss_scalar.val();
 			}
-      if (lock_flag && testbed.m_loss_scalar.val() < 0.0005 && scene_flag) {
+
+      // calculate if loss stops decay
+      vector<float> subvector_left = {testbed.m_loss_graph.begin(), testbed.m_loss_graph.end() - 1};
+      vector<float> subvector_right = {testbed.m_loss_graph.begin() + 1, testbed.m_loss_graph.end()};
+      std::transform(subvector_right.begin(), subvector_right.end(), subvector_left.begin(), subvector_right.begin(), std::minus<float>());
+      float stdev = standardDevation(subvector_right);
+      tlog::info() << "step: " << testbed.m_training_step << ", sample: " << testbed.m_loss_graph_samples << ", stdev: " << stdev;
+
+      if (lock_flag && scene_flag && testbed.m_loss_graph_samples > testbed.m_loss_graph.size() && stdev < 0.10f) {
         fs::path lock_path = get(lock_flag);
         const std::string& str = lock_path.str();
         const char *cstr = str.c_str();
         int lock_fd = tryGetLock(cstr);
         if (lock_fd > -1) {
           tlog::info() << "Got Lock!";
-          
+
           // 1. if this doesn't unlock, blender could not execute (blender can read ngp lock)
           // 2. if I don't load training data here, ngp will wait for blender finish execute (npg can read blender's lock, npg does not access illegal stuff outside of lock)
           // 3. if ngp got lock, and blender change file, it will break
           fs::path scene_path = get(scene_flag);
-          testbed.load_training_data(scene_path.str());
+          const std::string& scene_string = scene_path.str();
+          fs::path change_path = get(change_flag);
+
+          if (change_path.exists()) {
+            clock_t start = clock();
+            change_path.remove_file();
+            testbed.load_training_data(scene_string);
+            tlog::info() << "Time: " << (std::clock() - start) / (double)(CLOCKS_PER_SEC / 1000) << " ms. Will Release Lock";
+          }
 
           releaseLock(lock_fd, cstr);
-          tlog::info() << "Released Lock";
         } else {
 				  tlog::warning() << "Cannot Aquire Lock at " << lock_path.str();
         }
