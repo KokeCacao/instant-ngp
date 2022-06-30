@@ -283,26 +283,28 @@ int main(int argc, char** argv) {
 		}
 
 		// Render/training loop
+    std::cout << "Koke_Cacao: enter training loop" << std::endl;
+
 		while (testbed.frame()) {
 			if (!gui) {
 				tlog::info() << "iteration=" << testbed.m_training_step << " loss=" << testbed.m_loss_scalar.val();
 			}
+      std::cout << "\33[2K\rKoke_Cacao: Iteration=" << testbed.m_training_step << " Loss=" << testbed.m_loss_scalar.val() << std::flush;
 
       // calculate if loss stops decay
       vector<float> subvector_left = {testbed.m_loss_graph.begin(), testbed.m_loss_graph.end() - 1};
       vector<float> subvector_right = {testbed.m_loss_graph.begin() + 1, testbed.m_loss_graph.end()};
       std::transform(subvector_right.begin(), subvector_right.end(), subvector_left.begin(), subvector_right.begin(), std::minus<float>());
       float stdev = standardDevation(subvector_right);
-      tlog::info() << "step: " << testbed.m_training_step << ", sample: " << testbed.m_loss_graph_samples << ", stdev: " << stdev;
+      // tlog::info() << "step: " << testbed.m_training_step << ", sample: " << testbed.m_loss_graph_samples << ", stdev: " << stdev;
 
       if (lock_flag && scene_flag && testbed.m_loss_graph_samples > testbed.m_loss_graph.size() && stdev < 0.10f) {
+        std::cout << "\33[2K\rKoke_Cacao: Iteration=" << testbed.m_training_step << " Loss=" << testbed.m_loss_scalar.val() << " Slow Training!" << std::flush;
         fs::path lock_path = get(lock_flag);
         const std::string& str = lock_path.str();
         const char *cstr = str.c_str();
         int lock_fd = tryGetLock(cstr);
         if (lock_fd > -1) {
-          tlog::info() << "Got Lock!";
-
           // 1. if this doesn't unlock, blender could not execute (blender can read ngp lock)
           // 2. if I don't load training data here, ngp will wait for blender finish execute (npg can read blender's lock, npg does not access illegal stuff outside of lock)
           // 3. if ngp got lock, and blender change file, it will break
@@ -314,12 +316,16 @@ int main(int argc, char** argv) {
             clock_t start = clock();
             change_path.remove_file();
             testbed.load_training_data(scene_string);
+            std::cout << std::endl;
             tlog::info() << "Time: " << (std::clock() - start) / (double)(CLOCKS_PER_SEC / 1000) << " ms. Will Release Lock";
+            std::cout << std::endl;
           }
 
           releaseLock(lock_fd, cstr);
         } else {
+          std::cout << std::endl;
 				  tlog::warning() << "Cannot Aquire Lock at " << lock_path.str();
+          std::cout << std::endl;
         }
       }
 		}
