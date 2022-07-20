@@ -125,6 +125,13 @@ int main(int argc, char** argv) {
 		{"lock"},
 	};
 
+	ValueFlag<string> point_cloud_flag{
+		parser,
+		"POINT_CLOUD",
+		"Point cloud data",
+		{"point-cloud"},
+	};
+
 	ValueFlag<string> change_flag{
 		parser,
 		"CHANGE",
@@ -230,6 +237,15 @@ int main(int argc, char** argv) {
 				return 1;
 			}
 			testbed.load_training_data(scene_path.str());
+		}
+
+		if (point_cloud_flag) {
+			fs::path point_cloud_path = get(point_cloud_flag);
+			if (!point_cloud_path.exists()) {
+				tlog::error() << "Point cloud path " << point_cloud_path << " does not exist.";
+				return 1;
+			}
+			testbed.load_point_cloud_data(point_cloud_path.str());
 		}
 
 		std::string mode_str;

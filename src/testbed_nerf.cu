@@ -359,27 +359,66 @@ __global__ void extract_srgb_with_activation(const uint32_t n_elements,	const ui
 	rgb[elem_idx*rgb_stride + dim_idx] = c;
 }
 
+__global__ void mark_all_untrained_grid(const uint32_t n_elements,  float* __restrict__ grid_out
+) {
+	const uint32_t i = threadIdx.x + blockIdx.x * blockDim.x; // can be [0, NERF_GRIDSIZE()^3 * NERF_CASCADES() - 1]
+	if (i >= n_elements) return;
+  grid_out[i] = -1.f;
+}
+
+__global__ void mark_untrained_point_cloud_grid(const uint32_t n_points,  float* __restrict__ grid_out,
+  float* __restrict__ points, const uint32_t n_elements
+) {
+  const uint32_t i = threadIdx.x + blockIdx.x * blockDim.x;
+  if (i >= n_points) return;
+  // Koke_Cacao: edited to test theory
+  // if (x >= NERF_GRIDSIZE()/2) {
+  //   grid_out[i] = -1.f;
+  // }
+  grid_out[i] = -1.f; // disable all grid first
+
+  const size_t levels = NERF_CASCADES();
+  const size_t level_size = NERF_GRIDSIZE()*NERF_GRIDSIZE()*NERF_GRIDSIZE();
+  for (size_t level = 0; level < levels; level++) {
+    uint32_t x = round(((points[i*3 + 0] - 0.5) / scalbnf(1.0f, level) + 0.5) * NERF_GRIDSIZE() - 0.5f);
+    uint32_t y = round(((points[i*3 + 1] - 0.5) / scalbnf(1.0f, level) + 0.5) * NERF_GRIDSIZE() - 0.5f);
+    uint32_t z = round(((points[i*3 + 2] - 0.5) / scalbnf(1.0f, level) + 0.5) * NERF_GRIDSIZE() - 0.5f);
+    uint32_t pos_idx = tcnn::morton3D(x, y, z);
+    // mark all grid inside aabb_scale using point cloud (otherwise no grid exist outside of aabb_scale)
+    if (pos_idx + level * level_size < n_elements) grid_out[pos_idx + level * level_size] = 0.f;
+  }
+}
+
 __global__ void mark_untrained_density_grid(const uint32_t n_elements,  float* __restrict__ grid_out,
 	const uint32_t n_training_images,
 	const TrainingImageMetadata* __restrict__ metadata,
 	const TrainingXForm* training_xforms,
-	bool clear_visible_voxels
+	bool clear_visible_voxels,
+  bool point_cloud
 ) {
-	const uint32_t i = threadIdx.x + blockIdx.x * blockDim.x;
+	const uint32_t i = threadIdx.x + blockIdx.x * blockDim.x; // can be [0, NERF_GRIDSIZE()^3 * NERF_CASCADES() - 1]
 	if (i >= n_elements) return;
 
-	uint32_t level = i / (NERF_GRIDSIZE()*NERF_GRIDSIZE()*NERF_GRIDSIZE());
-	uint32_t pos_idx = i % (NERF_GRIDSIZE()*NERF_GRIDSIZE()*NERF_GRIDSIZE());
+  // one level has fixed size of NERF_GRIDSIZE()*NERF_GRIDSIZE()*NERF_GRIDSIZE()
+	uint32_t level = i / (NERF_GRIDSIZE()*NERF_GRIDSIZE()*NERF_GRIDSIZE()); // level index
+	uint32_t pos_idx = i % (NERF_GRIDSIZE()*NERF_GRIDSIZE()*NERF_GRIDSIZE()); // can be [0, NERF_GRIDSIZE()^3 - 1]
 
+  // convert grid index to x, y, z each span [0, NERF_GRIDSIZE()-1] from index
 	uint32_t x = tcnn::morton3D_invert(pos_idx>>0);
 	uint32_t y = tcnn::morton3D_invert(pos_idx>>1);
 	uint32_t z = tcnn::morton3D_invert(pos_idx>>2);
 
-
-
+  // pos: center of the grid element represented by (x, y, z) in a grid of size 2^k centered around (0.5, 0.5, 0.5)
+  // [0, NERF_GRIDSIZE()]
+  // [0.5, NERF_GRIDSIZE() + 0.5] - shift to center of grid
+  // [0.5 / NERF_GRIDSIZE(), 1 + 0.5 / NERF_GRIDSIZE()] - make range to 1
+  // [0.5 / NERF_GRIDSIZE() - 0.5, 1 - 0.5 / NERF_GRIDSIZE() - 0.5] - center the grid center (not center corner)
+  // [(0.5 / NERF_GRIDSIZE() - 0.5)*2^k, (1 - 0.5 / NERF_GRIDSIZE() - 0.5)*2^k] - consider cascade level
+  // [(0.5 / NERF_GRIDSIZE() - 0.5)*2^k + 0.5, (1 - 0.5 / NERF_GRIDSIZE() - 0.5)*2^k + 0.5] - centered around (0.5, 0.5, 0.5)
 	Vector3f pos = ((Vector3f{(float)x+0.5f, (float)y+0.5f, (float)z+0.5f}) / NERF_GRIDSIZE() - Vector3f::Constant(0.5f)) * scalbnf(1.0f, level) + Vector3f::Constant(0.5f);
 	float voxel_radius = 0.5f*SQRT3()*scalbnf(1.0f, level) / NERF_GRIDSIZE();
 	int count=0;
+
 	for (uint32_t j=0; j < n_training_images; ++j) {
 		if (metadata[j].camera_distortion.mode == ECameraDistortionMode::FTheta) {
 			// not supported for now
@@ -404,7 +443,14 @@ __global__ void mark_untrained_density_grid(const uint32_t n_elements,  float* _
 	}
 
 	if (clear_visible_voxels || (grid_out[i] < 0) != (count <= 0)) {
-		grid_out[i] = (count > 0) ? 0.f : -1.f;
+    if (point_cloud) {
+      if (count <= 0 ) {
+        grid_out[i] = -1.f;
+      }
+    } else {
+      // Koke_Cacao: don't set things to 0 so that we are not overriding point cloud stuff
+      grid_out[i] = (count > 0) ? 0.f : -1.f;
+    }
 	}
 }
 
@@ -2597,6 +2643,7 @@ void Testbed::update_density_grid_nerf(float decay, uint32_t n_uniform_density_g
 
 	const uint32_t padded_output_width = m_nerf_network->padded_density_output_width();
 
+  // Koke_Cacao: allocate memory space, input specifies how many of them
 	GPUMemoryArena::Allocation alloc;
 	auto scratch = allocate_workspace_and_distribute<
 		NerfPosition,       // positions at which the NN will be queried for density evaluation
@@ -2610,6 +2657,8 @@ void Testbed::update_density_grid_nerf(float decay, uint32_t n_uniform_density_g
 	float* density_grid_tmp = std::get<2>(scratch);
 	network_precision_t* mlp_out = std::get<3>(scratch);
 
+  // Koke_Cacao: camera culling stuff, marking unseen region as -1.0f
+  // Koke_Cacao: TODO: try removing below culling
 	if (m_training_step == 0 || m_nerf.training.n_images_for_training != m_nerf.training.n_images_for_training_prev) {
 		m_nerf.training.n_images_for_training_prev = m_nerf.training.n_images_for_training;
 		if (m_training_step == 0) {
@@ -2617,11 +2666,22 @@ void Testbed::update_density_grid_nerf(float decay, uint32_t n_uniform_density_g
 		}
 		// Only cull away empty regions where no camera is looking when the cameras are actually meaningful.
 		if (!m_nerf.training.dataset.has_rays) {
+      const uint32_t n_points = m_nerf.n_points;
+      if (n_points != 0) {
+        tlog::info() << "Marking All Grid Non-Trainable ...";
+        linear_kernel(mark_all_untrained_grid, 0, stream, n_elements, m_nerf.density_grid.data());
+        tlog::info() << "Marking Point Cloud Trainable ...";
+        linear_kernel(mark_untrained_point_cloud_grid, 0, stream, n_points, m_nerf.density_grid.data(),
+          m_nerf.point_cloud.data(), n_elements
+        );
+      }
+      tlog::info() << "Marking Non-Camera-Focused-Region Non-Trainable";
 			linear_kernel(mark_untrained_density_grid, 0, stream, n_elements, m_nerf.density_grid.data(),
 				m_nerf.training.n_images_for_training,
 				m_nerf.training.metadata_gpu.data(),
 				m_nerf.training.transforms_gpu.data(),
-				m_training_step == 0
+				m_training_step == 0,
+        n_points != 0
 			);
 		} else {
 			CUDA_CHECK_THROW(cudaMemsetAsync(m_nerf.density_grid.data(), 0, sizeof(float)*n_elements, stream));
@@ -2632,34 +2692,39 @@ void Testbed::update_density_grid_nerf(float decay, uint32_t n_uniform_density_g
 	for (uint32_t i = 0; i < n_steps; ++i) {
 		CUDA_CHECK_THROW(cudaMemsetAsync(density_grid_tmp, 0, sizeof(float)*n_elements, stream));
 
+    // Koke_Cacao: random sample space and associate sampled region with array
 		linear_kernel(generate_grid_samples_nerf_nonuniform, 0, stream,
-			n_uniform_density_grid_samples,
+			n_uniform_density_grid_samples, // Koke_Cacao: uniform, but it seems actually nonuniform?
 			m_rng,
 			m_nerf.density_grid_ema_step,
 			m_aabb,
-			m_nerf.density_grid.data(),
-			density_grid_positions,
-			density_grid_indices,
+			m_nerf.density_grid.data(), // Koke_Cacao: real marked data
+			density_grid_positions, // Koke_Cacao: initialized, store { warp_position(pos, aabb), warp_dt(MIN_CONE_STEPSIZE()) }
+			density_grid_indices, // Koke_Cacao: initialized, store uint32_t
 			m_nerf.max_cascade+1,
 			-0.01f
 		);
 		m_rng.advance();
 
+    // Koke_Cacao: append another sample
 		linear_kernel(generate_grid_samples_nerf_nonuniform, 0, stream,
-			n_nonuniform_density_grid_samples,
+			n_nonuniform_density_grid_samples, // Koke_Cacao: nonuniform
 			m_rng,
 			m_nerf.density_grid_ema_step,
 			m_aabb,
-			m_nerf.density_grid.data(),
-			density_grid_positions+n_uniform_density_grid_samples,
-			density_grid_indices+n_uniform_density_grid_samples,
+			m_nerf.density_grid.data(), // Koke_Cacao: real marked data
+			density_grid_positions+n_uniform_density_grid_samples, // Koke_Cacao: initialized, pointer arithmetic
+			density_grid_indices+n_uniform_density_grid_samples, // Koke_Cacao: initialized, pointer arithmetic
 			m_nerf.max_cascade+1,
 			NERF_MIN_OPTICAL_THICKNESS()
 		);
 		m_rng.advance();
 
+    // Koke_Cacao: initialize 2DGPUMatrix of (type, size, size) output, wrapping mlp_out
 		GPUMatrix<network_precision_t, RM> density_matrix(mlp_out, padded_output_width, n_density_grid_samples);
+    // Koke_Cacao: initialize 2DGPUMatrix input from density_grid_positions of matching size (type, size, size)
 		GPUMatrix<float> density_grid_position_matrix((float*)density_grid_positions, sizeof(NerfPosition)/sizeof(float), n_density_grid_samples);
+    // Koke_Cacao: input space and get output density from MLP, filling density_matrix
 		m_nerf_network->density(stream, density_grid_position_matrix, density_matrix, false);
 
 		linear_kernel(splat_grid_samples_nerf_max_nearest_neighbor, 0, stream, n_density_grid_samples, density_grid_indices, mlp_out, density_grid_tmp, m_nerf.rgb_activation, m_nerf.density_activation);
@@ -2679,10 +2744,13 @@ void Testbed::update_density_grid_mean_and_bitfield(cudaStream_t stream) {
 	m_nerf.density_grid_mean.enlarge(reduce_sum_workspace_size(n_elements));
 
 	CUDA_CHECK_THROW(cudaMemsetAsync(m_nerf.density_grid_mean.data(), 0, sizeof(float), stream));
+  // Koke_Cacao: calculate the "ratio" of m_nerf.density_grid.data() to >= 0 (Mean Occupancy). This is tcnn::GPUMemory<float> density_grid_mean
 	reduce_sum(m_nerf.density_grid.data(), [n_elements] __device__ (float val) { return fmaxf(val, 0.f) / (n_elements); }, m_nerf.density_grid_mean.data(), n_elements, stream);
 
+  // Koke_Cacao: threshold density_grid with min(threshold, mena density) and store it in density_grid_bitfield
 	linear_kernel(grid_to_bitfield, 0, stream, n_elements/8 * NERF_CASCADES(), m_nerf.density_grid.data(), m_nerf.density_grid_bitfield.data(), m_nerf.density_grid_mean.data());
 
+  // Koke_Cacao: max_pool from small level LOD to large level LOD where get_density_grid_bitfield_mip is a pointer
 	for (uint32_t level = 1; level < NERF_CASCADES(); ++level) {
 		linear_kernel(bitfield_max_pool, 0, stream, n_elements/64, m_nerf.get_density_grid_bitfield_mip(level-1), m_nerf.get_density_grid_bitfield_mip(level));
 	}
@@ -3232,6 +3300,7 @@ void Testbed::training_prep_nerf(uint32_t batch_size, cudaStream_t stream) {
 	float alpha = m_nerf.training.density_grid_decay;
 	uint32_t n_cascades = m_nerf.max_cascade+1;
 
+  if (lock_density_grid) return;
 	if (m_training_step < 256) {
 		update_density_grid_nerf(alpha, NERF_GRIDSIZE()*NERF_GRIDSIZE()*NERF_GRIDSIZE()*n_cascades, 0, stream);
 	} else {

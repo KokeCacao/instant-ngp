@@ -66,7 +66,9 @@ public:
 	Testbed(ETestbedMode mode, const std::string& data_path) : Testbed(mode) { load_training_data(data_path); }
 	Testbed(ETestbedMode mode, const std::string& data_path, const std::string& network_config_path) : Testbed(mode, data_path) { reload_network_from_file(network_config_path); }
 	Testbed(ETestbedMode mode, const std::string& data_path, const nlohmann::json& network_config) : Testbed(mode, data_path) { reload_network_from_json(network_config); }
-	void load_training_data(const std::string& data_path);
+	
+  void load_point_cloud_data(const std::string& point_cloud_path);
+  void load_training_data(const std::string& data_path);
 	void clear_training_data();
 
 	using distance_fun_t = std::function<void(uint32_t, const tcnn::GPUMemory<Eigen::Vector3f>&, tcnn::GPUMemory<float>&, cudaStream_t)>;
@@ -603,6 +605,9 @@ public:
 		} training = {};
 
 		tcnn::GPUMemory<float> density_grid; // NERF_GRIDSIZE()^3 grid of EMA smoothed densities from the network
+		tcnn::GPUMemory<float> point_cloud; // Koke_Cacao: point cloud data
+    int n_points;
+    
 		tcnn::GPUMemory<uint8_t> density_grid_bitfield;
 		uint8_t* get_density_grid_bitfield_mip(uint32_t mip);
 		tcnn::GPUMemory<float> density_grid_mean;
@@ -625,7 +630,7 @@ public:
 
 		float cone_angle_constant = 1.f/256.f;
 
-		bool visualize_cameras = false;
+		bool visualize_cameras = true;
 		bool render_with_camera_distortion = false;
 		CameraDistortion render_distortion = {};
 
@@ -785,7 +790,7 @@ public:
 	float m_picture_in_picture_res = 0.f; // if non zero, requests a small second picture :)
 
 	bool m_imgui_enabled = true; // tab to toggle
-	bool m_visualize_unit_cube = false;
+	bool m_visualize_unit_cube = true;
 	bool m_snap_to_pixel_centers = false;
 
 	Eigen::Vector2f m_parallax_shift = {0.f, 0.f}; // to shift the viewer's head position by some amount parallel to the screen
@@ -807,6 +812,7 @@ public:
 	float m_histo_scale = 1.f;
 
 	uint32_t m_training_step = 0;
+  bool lock_density_grid = false;
 	uint32_t m_training_batch_size = 1 << 18;
 	Ema m_loss_scalar = {EEmaType::Time, 100};
 	std::vector<float> m_loss_graph = std::vector<float>(64, 0.0f);
@@ -815,6 +821,7 @@ public:
 	bool m_train_encoding = true;
 	bool m_train_network = true;
 
+  filesystem::path m_point_cloud_path;
 	filesystem::path m_data_path;
 	filesystem::path m_network_config_path;
 

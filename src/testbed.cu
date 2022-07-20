@@ -92,6 +92,56 @@ static bool ends_with(const std::string& str, const std::string& ending) {
 	return std::equal(std::rbegin(ending), std::rend(ending), std::rbegin(str));
 }
 
+// https://stackoverflow.com/questions/236129/how-do-i-iterate-over-the-words-of-a-string
+template <typename Out>
+void split(const std::string &s, char delim, Out result) {
+    std::istringstream iss(s);
+    std::string item;
+    while (std::getline(iss, item, delim)) {
+        *result++ = item;
+    }
+}
+std::vector<std::string> split(const std::string &s, char delim) {
+    std::vector<std::string> elems;
+    split(s, delim, std::back_inserter(elems));
+    return elems;
+}
+
+void Testbed::load_point_cloud_data(const std::string& point_cloud_path) {
+	m_point_cloud_path = point_cloud_path;
+
+	if (!m_point_cloud_path.exists()) {
+		throw std::runtime_error{std::string{"Point Cloud path '"} + m_point_cloud_path.str() + "' does not exist."};
+	}
+
+  if (m_testbed_mode == ETestbedMode::Nerf) {
+    tlog::info() << "Loading Point Cloud Data";
+
+    // round(((x - 0.5) / scalbnf(1.0f, level) + 0.5) * NERF_GRIDSIZE() - 0.5f);
+
+    std::ifstream file;
+    file.open(point_cloud_path);
+    std::string str;
+    std::vector<float> vec;
+    while (std::getline(file, str)) {
+    // Line contains string of length > 0 then save it in vector
+      if (str.size() > 0) {
+          std::vector<std::string> v = split(str, ' ');
+          vec.push_back(std::stof(v[0]));
+          vec.push_back(std::stof(v[1]));
+          vec.push_back(std::stof(v[2]));
+      }
+    }
+    m_nerf.n_points = vec.size() / 3;
+    m_nerf.point_cloud.enlarge(m_nerf.n_points * 3);
+    
+    tlog::info() << "Loaded " << m_nerf.n_points << " Point Cloud. Putting them into GPU";
+    m_nerf.point_cloud.copy_from_host(vec.data(), m_nerf.n_points * 3);
+  } else {
+    tlog::info() << "Skipping Point Cloud Data";
+  }
+}
+
 void Testbed::load_training_data(const std::string& data_path) {
 	m_data_path = data_path;
 
@@ -407,6 +457,8 @@ void Testbed::imgui() {
 		ImGui::SameLine();
 		ImGui::Checkbox("Random levels", &m_max_level_rand_training);
 		if (m_testbed_mode == ETestbedMode::Nerf) {
+      ImGui::Checkbox("Lock density grid", &lock_density_grid);
+			ImGui::SameLine();
 			ImGui::Checkbox("Train envmap", &m_nerf.training.train_envmap);
 			ImGui::SameLine();
 			ImGui::Checkbox("Train extrinsics", &m_nerf.training.optimize_extrinsics);
