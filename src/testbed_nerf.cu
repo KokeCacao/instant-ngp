@@ -380,12 +380,53 @@ __global__ void mark_untrained_point_cloud_grid(const uint32_t n_points,  float*
   const size_t levels = NERF_CASCADES();
   const size_t level_size = NERF_GRIDSIZE()*NERF_GRIDSIZE()*NERF_GRIDSIZE();
   for (size_t level = 0; level < levels; level++) {
-    uint32_t x = round(((points[i*3 + 0] - 0.5) / scalbnf(1.0f, level) + 0.5) * NERF_GRIDSIZE() - 0.5f);
-    uint32_t y = round(((points[i*3 + 1] - 0.5) / scalbnf(1.0f, level) + 0.5) * NERF_GRIDSIZE() - 0.5f);
-    uint32_t z = round(((points[i*3 + 2] - 0.5) / scalbnf(1.0f, level) + 0.5) * NERF_GRIDSIZE() - 0.5f);
+    // uint32_t x = round(((points[i*3 + 0] - 0.5f) / scalbnf(1.0f, level) + 0.5f) * NERF_GRIDSIZE() - 0.5f);
+    // uint32_t y = round(((points[i*3 + 1] - 0.5f) / scalbnf(1.0f, level) + 0.5f) * NERF_GRIDSIZE() - 0.5f);
+    // uint32_t z = round(((points[i*3 + 2] - 0.5f) / scalbnf(1.0f, level) + 0.5f) * NERF_GRIDSIZE() - 0.5f);
+    // The above code will produce NeRF Centered at 0,0,0 and 3 times as big
+    // The below code scale down and move to 0.5,0.5,0.5 to match NeRF standard
+    uint32_t x = round((((points[i*3 + 0])) / scalbnf(1.0f, level) + 0.5f) * NERF_GRIDSIZE() - 0.5f);
+    uint32_t y = round((((points[i*3 + 1])) / scalbnf(1.0f, level) + 0.5f) * NERF_GRIDSIZE() - 0.5f);
+    uint32_t z = round((((points[i*3 + 2])) / scalbnf(1.0f, level) + 0.5f) * NERF_GRIDSIZE() - 0.5f);
     uint32_t pos_idx = tcnn::morton3D(x, y, z);
     // mark all grid inside aabb_scale using point cloud (otherwise no grid exist outside of aabb_scale)
     if (pos_idx + level * level_size < n_elements) grid_out[pos_idx + level * level_size] = 0.f;
+
+    uint32_t x_yp = x;
+    uint32_t y_yp = y+1;
+    uint32_t z_yp = z;
+    uint32_t pos_idx_yp = tcnn::morton3D(x_yp, y_yp, z_yp);
+    if (pos_idx_yp + level * level_size < n_elements) grid_out[pos_idx_yp + level * level_size] = 0.f;
+
+    uint32_t x_yn = x;
+    uint32_t y_yn = y-1;
+    uint32_t z_yn = z;
+    uint32_t pos_idx_yn = tcnn::morton3D(x_yn, y_yn, z_yn);
+    if (pos_idx_yn + level * level_size < n_elements) grid_out[pos_idx_yn + level * level_size] = 0.f;
+
+    uint32_t x_xp = x+1;
+    uint32_t y_xp = y;
+    uint32_t z_xp = z;
+    uint32_t pos_idx_xp = tcnn::morton3D(x_xp, y_xp, z_xp);
+    if (pos_idx_xp + level * level_size < n_elements) grid_out[pos_idx_xp + level * level_size] = 0.f;
+
+    uint32_t x_xn = x-1;
+    uint32_t y_xn = y;
+    uint32_t z_xn = z;
+    uint32_t pos_idx_xn = tcnn::morton3D(x_xn, y_xn, z_xn);
+    if (pos_idx_xn + level * level_size < n_elements) grid_out[pos_idx_xn + level * level_size] = 0.f;
+
+    uint32_t x_zp = x;
+    uint32_t y_zp = y;
+    uint32_t z_zp = z+1;
+    uint32_t pos_idx_zp = tcnn::morton3D(x_zp, y_zp, z_zp);
+    if (pos_idx_zp + level * level_size < n_elements) grid_out[pos_idx_zp + level * level_size] = 0.f;
+
+    uint32_t x_zn = x;
+    uint32_t y_zn = y;
+    uint32_t z_zn = z-1;
+    uint32_t pos_idx_zn = tcnn::morton3D(x_zn, y_zn, z_zn);
+    if (pos_idx_zn + level * level_size < n_elements) grid_out[pos_idx_zn + level * level_size] = 0.f;
   }
 }
 

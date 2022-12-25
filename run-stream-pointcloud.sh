@@ -1,0 +1,1 @@
+cd /home/hankec/dev/instant-ngp && CUDA_VISIBLE_DEVICES=1 ./build/testbed --scene ./data/nerf/out/transforms_stream.json --lock ./data/nerf/out/.lock --change ./data/nerf/out/.changed_stream --point-cloud ~/dev/instant-ngp/data/nerf/out/pointcloud.xyzrgb
